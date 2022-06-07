@@ -34,12 +34,42 @@ def is_useful_tile(tile: Image) -> bool:
     return not is_gray(most_frequent_color)
 
 
+def crop_slide_by_grid(
+        slide: OpenSlide,
+        level: int,
+        size: tuple,
+        overlap: float,
+        destination_path: str
+    ):
+    tile_size_x, tile_size_y = size
+    full_size_x, full_size_y = slide.level_dimensions[level]
+    filename_prefix = slide._filename.split('/')[-1].replace('.mrxs', '')
+    stride_x = int(tile_size_x * (1 - overlap))
+    stride_y = int(tile_size_y * (1 - overlap))
+    n_x = (full_size_x - tile_size_x) // stride_x + 1
+    n_y = (full_size_y - tile_size_y) // stride_y + 1
+    estimated_number = n_x * n_y
+    d = int(np.ceil(np.log10(estimated_number)))
+    saved_number = 0
+    for i in range(n_x):
+        for j in range(n_y):
+            top_left = (i * stride_x * 2 ** level, j * stride_y * 2 ** level)
+            tile = slide.read_region(
+                location=top_left,
+                level=level,
+                size=size
+            )
+            if is_useful_tile(tile):
+                tile.save(os.path.join(destination_path, f'{filename_prefix}_{saved_number:0{d}}_{level}.png'))
+                saved_number += 1
+
+
 def crop_slides_rejection_sampling(
-        slides: List[OpenSlide], 
-        level: int, 
-        size: tuple, 
-        destination_path: str, 
-        number: int
+        slides: List[OpenSlide],
+        level: int,
+        size: tuple,
+        number: int,
+        destination_path: str
     ):
     tile_size_x, tile_size_y = size
     saved_number = 0
@@ -63,11 +93,20 @@ def crop_slides_rejection_sampling(
 
 def run_cropping(args):
     slides = read_slides(args.folders)
-    crop_slides_rejection_sampling(slides, args.level, args.size, args.destination, args.number)
+    if args.method == 'random':
+        crop_slides_rejection_sampling(slides, args.level, args.size, args.number, args.destination)
+    elif args.method == 'grid':
+        for slide in slides:
+            crop_slide_by_grid(slide, args.level, args.size, args.overlap, args.destination)
 
 
 if __name__ == '__main__':
     parser = ArgumentParser()
+    parser.add_argument("--method", choices=["random", "grid"],
+                        default="random",
+                        help="The method of cropping images: 'random' "
+                             "for random sampling, 'grid' for cropping "
+                             "by grid with possible overlapping")
     parser.add_argument("--folders", dest="folders", nargs="+",
                         help="Paths to slides folders separated by spaces",
                         required=True)
@@ -77,8 +116,11 @@ if __name__ == '__main__':
     parser.add_argument("--size", dest="size", nargs=2, type=int,
                         help="Tile size components separated by a space",
                         default=(256, 256))
+    parser.add_argument("--overlap", dest="overlap", type=float,
+                        help="Tiles mutual overlap ratio in grid method",
+                        default=0.0)
     parser.add_argument("--number", type=int, dest="number",
-                        default=100, help="Number of images to produce")
+                        default=10000, help="Number of images to produce in random method")
     parser.add_argument("--level", type=int, dest="level",
                         default=2, help="Level for image cropping")
 
